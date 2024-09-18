@@ -1,0 +1,270 @@
+---
+title: "Popularity Tutorial"
+output: pdf_document
+author: "Maya Dalton"
+date: "September 24, 2024"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# What is popularity? 
+**Popularity**, also called *preferential attachment*, means that the more connected a node is, the more likely it is to receive new links. Nodes with higher degree have stronger ability to attract links added to the network. Barabasi and Albert (1999) introduced this concept based on the fact that vertices in many large networks follow a *scale-free power-law distribution*. This means: (i) networks expand continuously by the addition of new vertices, and (ii) new vertices attach to nodes that are already well connected.
+
+An example of this would be modeling the growth of paper citations. Wu et. al. (2013) models this as new papers attach themselves to the citation network based only on the popularity of the currently existing papers. Simply, the "rich-get-richer" in terms of paper citations. 
+
+# The Data for Today
+Colby, Darren, 2021, "Chaos from Order: A Network Analysis of In-fighting Before and After El Chapo's Arrest". https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/L4AXQT
+
+The author examines the relationship between leadership decapitation and in-fighting in drug cartels in Mexico. They hypothesize that leadership decapitation will weaken alliances between armed actors, lead to greater *preferential attachment* in networks of cartels and militias, and lead to decreased clustering as cartels seek to expand their power. Includes a network dataset of episodes of in-fighting among cartels and the militias five years before and after "El Chapo" (the former leader of the Sinaloa Cartel), was arrested in 2016.
+
+## A quick note: using `igraph`
+For the first part of the tutorial, I'll use `igraph` for visualization, which is a bit different than the `network` package. If you run into errors in the later code, run:
+
+`detach("package:igraph", unload = TRUE)`
+
+```{r, message=FALSE}
+# Load libraries
+library(dplyr)
+library(readr)
+library(RColorBrewer)
+library(network)
+library(sna)
+library(igraph)
+color <- brewer.pal(4, "RdBu") # choosing a specific palette
+
+drugnet <- read_csv("drugnet.csv")
+```
+
+```{r, message=FALSE}
+################################################
+## Initial Cleaning ##
+################################################
+# Creating time step variable for later - if you don't have a time step variable don't worry, we'll get there!
+drugnet$time_step <- drugnet$year - min(drugnet$year) + 1
+
+edge_df <- drugnet %>% # Create edge list with sides and time step
+   select(sideA, sideB, time_step)
+
+combined_graph <- graph_from_data_frame(edge_df, directed=FALSE) # Create igraph object
+
+E(combined_graph)$time_step <- edge_df$time_step # Add time step as attribute
+
+# Split into two graphs for pre and post arrest
+preNet <- subgraph.edges(combined_graph, E(combined_graph)[E(combined_graph)$time_step < 5])
+
+postNet <- subgraph.edges(combined_graph, E(combined_graph)[E(combined_graph)$time_step >= 5])
+```
+
+```{r, fig.height=4, fig.width=6}
+################################################
+## Plots of Network Pre- and Post-Arrest ##
+################################################
+# Before El Chapo arrest
+set.seed(5)
+xy_cool <- layout_with_fr(preNet)
+xy <- plot(preNet, # network
+           vertex.label="", # don't display the labels
+           coord = xy_cool,  # set the coordinates
+           vertex.color=color,
+           edge.arrow.size = 0.5,
+           main = "Figure 1a. Cartel Network Pre-Arrest") # color the nodes
+
+# After El Chapo arrest
+set.seed(5)
+xy_cool <- layout_with_fr(postNet)
+xy <- plot(postNet, # network
+           vertex.label="", # don't display the labels
+           coord = xy_cool,  # set the coordinates
+           vertex.color=color,
+           edge.arrow.size = 0.5,
+           main = "Figure 1b. Cartel Network Post-Arrest") # color the nodes
+```
+
+Based on Figures 1a-b, there are a lot more nodes after El Chapo's arrest as groups engaged in in-fighting, disbanded, created off-shoot groups, and connected to others. We want to examine the attachment of new nodes to existing nodes using the concept of preferential attachment. First, let's look at degree centrality. In this case, a few nodes should have higher degrees, with many having smaller degrees. This signals that the higher degree nodes will attract the new nodes.  
+
+As shown in Figures 2a-b, before the arrest, the nodes were distributed across centrality scores. After the arrest, most nodes had low degrees with a handful having high degrees. 
+
+```{r, fig.height=4, fig.width=6}
+# Degree centrality pre-arrest
+pre_degree <- degree(preNet)
+hist(pre_degree, breaks = 30, main = "Figure 2a. Degree Centrality Distribution (Pre-Arrest)", 
+     xlab = "Degree", col = "lightblue")
+
+# Degree centrality post-arrest
+post_degree <- degree(postNet)
+hist(post_degree, breaks = 30, main = "Figure 2b. Degree Centrality Distribution (Post-Arrest)", 
+     xlab = "Degree", col = "lightblue")
+```
+
+Now, we can also plot based on degree centrality. We see the same thing as the histograms. Before the arrest, there were only a few cartel groups engaging with one another, all with lower centralities. However, after the arrest, only a handful of cartels have larger degrees meaning they are more central to the network and "take in" disbanded cartels after El Chapo's death. 
+
+```{r, fig.height=4, fig.width=6}
+#Plot based on degree centrality pre-arrest
+set.seed(5)
+plot(preNet, # network
+     vertex.label="", # don't display the labels
+     coord = xy_cool,  # set the coordinates
+     vertex.size = log(pre_degree), # size based on degree
+     vertex.color=color,  # color the nodes
+     edge.arrow.size = 0.2,
+     main = "Figure 3a. Pre-Arrest Network Based on Degree Centrality")
+
+#Plot based on degree centrality post-arrest
+plot(postNet, # network
+     vertex.label="", # don't display the labels
+     coord = xy_cool,  # set the coordinates
+     vertex.size = log(post_degree), # size based on degree
+     vertex.color=color,  # color the nodes
+     edge.arrow.size = 0.2,
+     main = "Figure 3b. Post-Arrest Network Based on Degree Centrality")
+```
+
+# Preferential Attachment - A Simulation
+The **PAFit** package provides a framework to model attachment mechanisms. To show this package, I'll do some simulations first. I simulate a network starting with two nodes and one edge, then one new node with 5 new edges is added at each time-step until the number of nodes is N = 1000.
+
+```{r, message=FALSE, warning=FALSE}
+############## Import packages
+#install.packages("PAFit")
+library(PAFit)
+```
+
+You can see in Figures 4a-b, the network at t=10 (4a) is smaller than at t=100 (4b), displaying the introduction of new nodes over time.  
+
+```{r, fig.height=4, fig.width=6}
+############## Simulate network & plot at different time steps
+set.seed(03152000)
+sim_net_1 <- generate_BA(N = 1000, m = 5) # 1000 nodes and 5 edges
+
+# Network Plot at t=10
+plot(sim_net_1, slice = 10, arrowhead.cex = 2, vertex.cex = 2,
+     vertex.col=color,
+     main="Figure 4a. Network at t=10") 
+
+# Network Plot at t=100
+plot(sim_net_1, slice = 100, arrowhead.cex = 2, vertex.cex = 2,
+     vertex.col=color,
+     main="Figure 4b. Network at t=100") 
+```
+
+Figures 5a-b show the distribution of degree centrality at t=10 and t=100. Again, these distributions show that there are only a few nodes with higher centrality, with more nodes at lower centrality.  
+ 
+```{r, fig.height=4, fig.width=6}
+############## Plot degree distribution different time steps
+# Distribution at t=10
+plot(sim_net_1, slice = 10, plot = "degree", cex = 2, cex.axis = 1, cex.lab = 1,
+     main="Figure 5a. Degree Distribution at t=10") 
+
+# Distribution at t=100
+plot(sim_net_1, slice = 100, plot = "degree", cex = 2, cex.axis = 1, cex.lab = 1,
+     main="Figure 5b. Degree Distribution at t=100") 
+```
+
+Now, we'll use this package to get the attachment exponents and examine the growth of the simulated network: 
+
+```{r}
+############## Summary statistics and PA coefficient
+# Get summary stats for the network
+stats_1 <- get_statistics(sim_net_1)
+
+# Getting the PA coefficient from the network
+result_PA <- only_A_estimate(sim_net_1, stats_1)
+summary(result_PA)
+```
+Here, we see the estimated attachment exponent ($\alpha$) is 0.994, meaning the network growth is almost **entirely driven by preferential attachment and new nodes are strictly more likely to connect to highly connected nodes**. In Figure 6 below, the PA coefficient increases across higher degrees in the network as well. This means that the new nodes are going to have very strong attachment to the highest degree nodes over time
+
+```{r}
+############## Plot estimation vs. actual attachment coefficients
+plot(result_PA, stats_1, min_A = 1, max_A = 2000, cex = 1, cex.axis = 0.5, cex.lab = 1,
+     main="Figure 6. Estimated vs. Actual PA Coefficients")
+lines(stats_1$center_k, stats_1$center_k, col = "red")
+```
+
+
+# Preferential Attachment - Cartel Data
+Going back to the cartel data, we can do the same analysis of preferential attachment for the network. We need to first clean up the data and convert it into a PAFit object.
+
+```{r}
+############## Cleaning the data to play nicely with PAFit (three columns: to, from, and time)
+# Edge list with three columns, converting side names to IDs
+drug_EL <- drugnet %>% 
+  mutate(sideA = as.numeric(as.factor(sideA)),  # converting side names to unique IDs
+         sideB = as.numeric(as.factor(sideB))) %>%
+  select(sideA, sideB, time_step) %>%
+  distinct()
+```
+
+```{r}
+############## Making the edge list into a PAFit object
+drug_PAFit <- as.PAFit_net(as.matrix(drug_EL))
+```
+
+Similar to the simulation, the network at t=1 (which is 2012) includes a lot fewer groups than at t=9 (2020), displaying the introduction of many new nodes after El Chapo's arrest.
+
+```{r, fig.height=4, fig.width=6}
+############## Plot at different time steps
+# Network Plot at t=1 (2012)
+plot(drug_PAFit, slice = 1, 
+     arrowhead.cex = 2, vertex.cex = 3,
+     vertex.col=color,
+     main="Figure 7a. Network at t=1 (2012)") 
+
+# Network Plot at t=1 (2020)
+plot(drug_PAFit, slice = 9, 
+     arrowhead.cex = 2, vertex.cex = 3,
+     vertex.col=color,
+     main="Figure 7b. Network at t=9 (2020)") 
+```
+
+The distribution plots are also similar to the simulation and Figures 2a and 2b, where t=1 (2012; pre-arrest) has very few nodes in general, as well as fewer nodes with high degrees. However, at t=9 (2020; post-arrest), the distribution shifts to include more nodes in the distribution, with a few nodes having high degrees and more with smaller degrees. 
+
+```{r, fig.height=4, fig.width=6}
+############## Plot degree distribution different time steps
+# Distribution of degree centrality at t=1 (2012)
+plot(drug_PAFit, slice = 1, plot = "degree", cex = 2, cex.axis = 1, cex.lab = 1,
+     main="Figure 8a. Degree Distribution at t=1 (2012)") 
+
+# Distribution of degree centrality at t=9 (2020)
+plot(drug_PAFit, slice = 9, plot = "degree", cex = 2, cex.axis = 1, cex.lab = 1,
+     main="Figure 8b. Degree Distribution at t=9 (2020)") 
+```
+
+```{r}
+############## Summary statistics and PA coefficient
+# Get summary stats for the network
+stats_1 <- get_statistics(drug_PAFit)
+
+# Getting the PA coefficient from the network
+result_PA <- only_A_estimate(drug_PAFit, stats_1)
+summary(result_PA)
+```
+The estimated attachment exponent ($\alpha$) is 0.965, meaning the network growth is almost entirely driven by preferential attachment and new nodes are strictly more likely to connect to highly connected nodes. In the context of the data, new off-shoot cartel groups are more likely to connect to established cartel groups. 
+
+# But what if my data doesn't have a temporal aspect? 
+You can still use the PAFit package, however, it still expects you to have three columns in your edge list. So you'll need to make a dummy column of time steps which is just a column of 1s for every row. 
+
+```{r, warning=FALSE}
+############## Cleaning the data to with no time aspect
+# Edge list with three columns, converting side names to IDs
+drug_EL <- drugnet %>% 
+  mutate(sideA = as.numeric(as.factor(sideA)),  # converting side names to unique IDs
+         sideB = as.numeric(as.factor(sideB)),
+         time_dummy = rep(1, nrow(drugnet))) %>% # create dummy time-step variable
+  select(sideA, sideB, time_dummy) %>%
+  distinct()
+
+############## Making the edge list into a PAFit object
+drug_PAFit <- as.PAFit_net(as.matrix(drug_EL))
+
+############## Now let's get the PA coefficient
+result_OS <- PAFit_oneshot(drug_PAFit)
+summary(result_OS)
+```
+
+The estimated attachment exponent ($\alpha$) is 3.904 without temporal aspects, meaning the attachment process is *super-linear*. Basically, high-degree nodes are even more likely to attract new connections. The higher the degree of a node, the disproportionately higher the probability that new nodes will attach to it. In the case of the data, the process is highly skewed toward high-degree cartel groups, which act as "hubs" and attract a lot of the new or disbanded groups. If one of these hubs were to suddenly disappear, it would significantly impact the network. 
+
+# Thank you!!
+
+
+
