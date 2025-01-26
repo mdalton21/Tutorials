@@ -13,9 +13,6 @@ library(tidyverse)
 library(ggplot2)
 library(did)
 
-# Set working directory
-setwd("~/OneDrive - The Pennsylvania State University/MA Thesis/Datasets")
-
 # Load datasets
 ecav <- read_excel("ECAV datatset_Version 1.2.xls")
 vdem <- read_csv("V-Dem-CY-Full+Others-v12.csv")
@@ -62,5 +59,5 @@ df.c <- df %>%
 
 df.c <- df.c %>% drop_na()
 
-write.csv(df.c, "~/OneDrive - The Pennsylvania State University/SoDA 501/Tutorials/Dalton-Tutorial/measurement-df.csv", row.names=FALSE)
+write.csv(df.c, "measurement-df.csv", row.names=FALSE)
 
